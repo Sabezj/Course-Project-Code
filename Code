@@ -1,0 +1,168 @@
+import tkinter as tk
+from tkinter import filedialog, simpledialog, colorchooser, Label, Button, OptionMenu, StringVar, Scale, HORIZONTAL
+import cv2
+import numpy as np
+from PIL import Image, ImageTk
+import os
+
+line_color = (0, 0, 0)
+background_color = None
+line_thickness = 1
+img = None
+resized_image = None
+edges_image = None
+processed_image = None
+max_dilation_size = 1
+
+def load_image():
+    global img, resized_image
+    path = filedialog.askopenfilename()
+    if path:
+        img = cv2.imread(path, cv2.IMREAD_COLOR)
+        resize_image()
+
+def resize_image():
+    global resized_image
+    if img is not None:
+        width = simpledialog.askinteger("Resize", "Enter the width:", minvalue=100, maxvalue=img.shape[1])
+        height = simpledialog.askinteger("Resize", "Enter the height:", minvalue=100, maxvalue=img.shape[0])
+        resized_image = cv2.resize(img, (width, height))
+        display_image(resized_image)
+
+def display_image(image):
+    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image_pil = Image.fromarray(image_rgb)
+    photo = ImageTk.PhotoImage(image_pil)
+    image_label.config(image=photo)
+    image_label.image = photo
+
+def choose_color():
+    global line_color
+    color_code = colorchooser.askcolor(title="Choose line color")
+    if color_code[1]:
+        line_color = hex_to_bgr(color_code[1])
+
+def choose_background_color():
+    global background_color
+    color_code = colorchooser.askcolor(title="Choose background color")
+    if color_code[1]:
+        background_color = hex_to_bgr(color_code[1])
+
+def get_line_thickness():
+    global line_thickness
+    thickness = simpledialog.askinteger("Input", "Enter line thickness (1-10)", minvalue=1, maxvalue=10)
+    if thickness:
+        line_thickness = thickness
+
+def update_max_dilation_size(val):
+    global max_dilation_size
+    max_dilation_size = int(val)
+
+def process_image():
+    global processed_image
+    if resized_image is not None:
+        gray_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2GRAY)
+        edges = cv2.Canny(gray_image, 50, 150)
+        if background_color is not None:
+            processed_image = np.full_like(resized_image, background_color, dtype=np.uint8)
+        else:
+            processed_image = resized_image.copy()
+        line_mask = np.zeros_like(edges)
+        for dilation_size in range(1, max_dilation_size + 1):
+            kernel = np.ones((dilation_size, dilation_size), np.uint8)
+            dilated_edges = cv2.dilate(edges, kernel, iterations=1)
+            lines = cv2.HoughLinesP(dilated_edges, 1, np.pi/180, threshold=100, minLineLength=10, maxLineGap=10)
+            if lines is not None:
+                for line in lines:
+                    x1, y1, x2, y2 = line[0]
+                    if not is_line_existing(x1, y1, x2, y2, line_mask):
+                        cv2.line(processed_image, (x1, y1), (x2, y2), line_color, line_thickness)
+                        cv2.line(line_mask, (x1, y1), (x2, y2), 255, line_thickness)
+        display_image(processed_image)
+
+def is_line_existing(x1, y1, x2, y2, line_mask):
+    """Check if the line already exists in the line mask."""
+    temp_mask = np.zeros_like(line_mask)
+    cv2.line(temp_mask, (x1, y1), (x2, y2), 255, line_thickness)
+    overlap = cv2.bitwise_and(temp_mask, line_mask)
+    return np.count_nonzero(overlap) > 0
+
+def check_edges():
+    if resized_image is not None:
+        global edges_image
+        gray_image = cv2.cvtColor(resized_image, cv2.COLOR_BGR2GRAY)
+        edges_image = cv2.Canny(gray_image, 50, 150)
+        display_image(edges_image)
+
+def save_image():
+    global processed_image
+    if processed_image is not None:
+        file_path = filedialog.asksaveasfilename(defaultextension=".png",
+                                                 filetypes=[("PNG files", "*.png"),
+                                                            ("JPEG files", "*.jpg"),
+                                                            ("All files", "*.*")])
+        if file_path:
+            cv2.imwrite(file_path, cv2.cvtColor(processed_image, cv2.COLOR_RGB2BGR))
+            print(f"Image saved to {file_path}")
+    else:
+        print("No processed image to save.")
+
+def hex_to_bgr(hex_color):
+    h = hex_color.lstrip('#')
+    return tuple(int(h[i:i+2], 16) for i in (4, 2, 0))
+
+def update_color(choice):
+    global line_color
+    predefined_colors = {
+        "red": (0, 0, 255),
+        "blue": (255, 0, 0),
+        "green": (0, 255, 0),
+        "yellow": (0, 255, 255),
+        "purple": (128, 0, 128),
+        "pink": (147, 20, 255),
+        "black": (0, 0, 0),
+        "white": (255, 255, 255),
+        "orange": (0, 165, 255),
+        "brown": (42, 42, 165),
+        "gray": (128, 128, 128),
+        "custom": "custom"
+    }
+    if choice == "custom":
+        choose_color()
+    else:
+        line_color = predefined_colors[choice]
+
+root = tk.Tk()
+root.title("Image Processing GUI")
+
+image_label = Label(root)
+image_label.pack()
+
+load_button = Button(root, text="Load Image", command=load_image)
+load_button.pack()
+
+color_var = StringVar(root)
+color_var.set("Choose Color")
+color_menu = OptionMenu(root, color_var, "red", "blue", "green", "yellow", "purple", "pink", "black", "white", "orange", "brown", "gray", "custom", command=update_color)
+color_menu.pack()
+
+background_button = Button(root, text="Choose Background Color", command=choose_background_color)
+background_button.pack()
+
+thickness_button = Button(root, text="Set Line Thickness", command=get_line_thickness)
+thickness_button.pack()
+
+max_dilation_size_slider = Scale(root, from_=1, to=10, orient=HORIZONTAL, label="Max Dilation Size", command=update_max_dilation_size)
+max_dilation_size_slider.set(max_dilation_size)
+max_dilation_size_slider.pack()
+
+process_button = Button(root, text="Process Image", command=process_image)
+process_button.pack()
+
+edges_button = Button(root, text="Check Edges", command=check_edges)
+edges_button.pack()
+
+save_button = Button(root, text="Save Image", command=save_image)
+save_button.pack()
+
+root.mainloop()
